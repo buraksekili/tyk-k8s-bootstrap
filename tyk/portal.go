@@ -1,4 +1,4 @@
-package helpers
+package tyk
 
 import (
 	"bytes"
@@ -6,35 +6,36 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"time"
-	"tyk/tyk/bootstrap/data"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"net/http"
+	"time"
+	"tyk/tyk/bootstrap/data"
+	"tyk/tyk/bootstrap/tyk/api"
+	"tyk/tyk/bootstrap/tyk/internal/constants"
 )
 
-func BoostrapPortal(client http.Client) error {
-	err := CreatePortalDefaultSettings(client)
+func (s *Service) BootstrapClassicPortal() error {
+	err := s.createPortalDefaultSettings()
 	if err != nil {
 		return err
 	}
 
-	err = InitialiseCatalogue(client)
+	err = s.initialiseCatalogue()
 	if err != nil {
 		return err
 	}
 
-	err = CreatePortalHomepage(client)
+	err = s.createPortalHomePage()
 	if err != nil {
 		return err
 	}
 
-	err = SetPortalCname(client)
+	err = s.setPortalCname()
 	if err != nil {
 		return err
 	}
@@ -42,18 +43,10 @@ func BoostrapPortal(client http.Client) error {
 	return nil
 }
 
-type InitCatalogReq struct {
-	OrgId string `json:"org_id"`
-}
-
-type CnameRequest struct {
-	Cname string `json:"cname"`
-}
-
-func SetPortalCname(client http.Client) error {
+func (s *Service) setPortalCname() error {
 	fmt.Println("Setting portal cname")
 
-	cnameReq := CnameRequest{Cname: data.BootstrapConf.Tyk.Org.Cname}
+	cnameReq := api.CnameReq{Cname: s.appArgs.Tyk.Org.Cname}
 
 	reqBody, err := json.Marshal(cnameReq)
 	if err != nil {
@@ -62,16 +55,16 @@ func SetPortalCname(client http.Client) error {
 
 	req, err := http.NewRequest(
 		http.MethodPut,
-		data.BootstrapConf.K8s.DashboardSvcUrl+ApiPortalCnameEndpoint,
+		s.appArgs.K8s.DashboardSvcUrl+constants.ApiPortalCnameEndpoint,
 		bytes.NewReader(reqBody),
 	)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set(data.AuthorizationHeader, data.BootstrapConf.Tyk.Admin.Auth)
+	req.Header.Set(data.AuthorizationHeader, s.appArgs.Tyk.Admin.Auth)
 
-	res, err := client.Do(req)
+	res, err := s.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -84,10 +77,10 @@ func SetPortalCname(client http.Client) error {
 	return RestartDashboard()
 }
 
-func InitialiseCatalogue(client http.Client) error {
+func (s *Service) initialiseCatalogue() error {
 	fmt.Println("Initialising Catalogue")
 
-	initCatalog := InitCatalogReq{OrgId: data.BootstrapConf.Tyk.Org.ID}
+	initCatalog := api.InitCatalogReq{OrgId: s.appArgs.Tyk.Org.ID}
 
 	reqBody, err := json.Marshal(initCatalog)
 	if err != nil {
@@ -96,21 +89,21 @@ func InitialiseCatalogue(client http.Client) error {
 
 	req, err := http.NewRequest(
 		http.MethodPost,
-		data.BootstrapConf.K8s.DashboardSvcUrl+ApiPortalCatalogueEndpoint,
+		s.appArgs.K8s.DashboardSvcUrl+constants.ApiPortalCatalogueEndpoint,
 		bytes.NewReader(reqBody),
 	)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set(data.AuthorizationHeader, data.BootstrapConf.Tyk.Admin.Auth)
+	req.Header.Set(data.AuthorizationHeader, s.appArgs.Tyk.Admin.Auth)
 
-	res, err := client.Do(req)
+	res, err := s.httpClient.Do(req)
 	if err != nil || res.StatusCode != http.StatusOK {
 		return err
 	}
 
-	resp := DashboardGeneralResponse{}
+	resp := api.DashboardAPIResp{}
 
 	bodyBytes, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -125,10 +118,10 @@ func InitialiseCatalogue(client http.Client) error {
 	return nil
 }
 
-func CreatePortalHomepage(client http.Client) error {
+func (s *Service) createPortalHomePage() error {
 	fmt.Println("Creating portal homepage")
 
-	homepageContents := GetPortalHomepage()
+	homepageContents := portalHomepageReq()
 
 	reqBody, err := json.Marshal(homepageContents)
 	if err != nil {
@@ -137,19 +130,19 @@ func CreatePortalHomepage(client http.Client) error {
 
 	reqData := bytes.NewReader(reqBody)
 
-	req, err := http.NewRequest(http.MethodPost, data.BootstrapConf.K8s.DashboardSvcUrl+ApiPortalPagesEndpoint, reqData)
+	req, err := http.NewRequest(http.MethodPost, s.appArgs.K8s.DashboardSvcUrl+constants.ApiPortalPagesEndpoint, reqData)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set(data.AuthorizationHeader, data.BootstrapConf.Tyk.Admin.Auth)
+	req.Header.Set(data.AuthorizationHeader, s.appArgs.Tyk.Admin.Auth)
 
-	res, err := client.Do(req)
+	res, err := s.httpClient.Do(req)
 	if err != nil || res.StatusCode != http.StatusOK {
 		return err
 	}
 
-	resp := DashboardGeneralResponse{}
+	resp := api.DashboardAPIResp{}
 
 	bodyBytes, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -164,13 +157,13 @@ func CreatePortalHomepage(client http.Client) error {
 	return nil
 }
 
-func GetPortalHomepage() PortalHomepageRequest {
-	return PortalHomepageRequest{
+func portalHomepageReq() api.PortalHomepageReq {
+	return api.PortalHomepageReq{
 		IsHomepage:   true,
 		TemplateName: "",
 		Title:        "Developer portal name",
 		Slug:         "/",
-		Fields: PortalFields{
+		Fields: api.PortalFields{
 			JumboCTATitle:       "Tyk Developer Portal",
 			SubHeading:          "Sub Header",
 			JumboCTALink:        "#cta",
@@ -192,35 +185,7 @@ func GetPortalHomepage() PortalHomepageRequest {
 	}
 }
 
-type PortalHomepageRequest struct {
-	IsHomepage   bool         `json:"is_homepage"`
-	TemplateName string       `json:"template_name"`
-	Title        string       `json:"title"`
-	Slug         string       `json:"slug"`
-	Fields       PortalFields `json:"fields"`
-}
-
-type PortalFields struct {
-	JumboCTATitle       string `json:"JumboCTATitle"`
-	SubHeading          string `json:"SubHeading"`
-	JumboCTALink        string `json:"JumboCTALink"`
-	JumboCTALinkTitle   string `json:"JumboCTALinkTitle"`
-	PanelOneContent     string `json:"PanelOneContent"`
-	PanelOneLink        string `json:"PanelOneLink"`
-	PanelOneLinkTitle   string `json:"PanelOneLinkTitle"`
-	PanelOneTitle       string `json:"PanelOneTitle"`
-	PanelThereeContent  string `json:"PanelThereeContent"`
-	PanelThreeContent   string `json:"PanelThreeContent"`
-	PanelThreeLink      string `json:"PanelThreeLink"`
-	PanelThreeLinkTitle string `json:"PanelThreeLinkTitle"`
-	PanelThreeTitle     string `json:"PanelThreeTitle"`
-	PanelTwoContent     string `json:"PanelTwoContent"`
-	PanelTwoLink        string `json:"PanelTwoLink"`
-	PanelTwoLinkTitle   string `json:"PanelTwoLinkTitle"`
-	PanelTwoTitle       string `json:"PanelTwoTitle"`
-}
-
-func CreatePortalDefaultSettings(client http.Client) error {
+func (s *Service) createPortalDefaultSettings() error {
 	fmt.Println("Creating bootstrap default settings")
 
 	// TODO(buraksekili): DashboardSvcUrl can be populated via environment variables. So, the URL
@@ -228,16 +193,16 @@ func CreatePortalDefaultSettings(client http.Client) error {
 	// approach here. Needs refactoring.
 	req, err := http.NewRequest(
 		http.MethodPut,
-		data.BootstrapConf.K8s.DashboardSvcUrl+ApiPortalConfigurationEndpoint,
+		s.appArgs.K8s.DashboardSvcUrl+constants.ApiPortalConfigurationEndpoint,
 		nil,
 	)
-	req.Header.Set(data.AuthorizationHeader, data.BootstrapConf.Tyk.Admin.Auth)
+	req.Header.Set(data.AuthorizationHeader, s.appArgs.Tyk.Admin.Auth)
 
 	if err != nil {
 		return err
 	}
 
-	res, err := client.Do(req)
+	res, err := s.httpClient.Do(req)
 	if err != nil || res.StatusCode != http.StatusOK {
 		return err
 	}

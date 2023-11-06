@@ -11,6 +11,14 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	TykModePro = "pro"
+	TykAuth    = "TYK_AUTH"
+	TykOrg     = "TYK_ORG"
+	TykMode    = "TYK_MODE"
+	TykUrl     = "TYK_URL"
+)
+
 func BootstrapTykOperatorSecret() error {
 	config, err := rest.InClusterConfig()
 	if err != nil {

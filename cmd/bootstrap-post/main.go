@@ -1,58 +1,67 @@
 package main
 
 import (
-	"crypto/tls"
+	"errors"
 	"fmt"
-	"net/http"
+	"github.com/sirupsen/logrus"
 	"os"
 	"tyk/tyk/bootstrap/data"
 	"tyk/tyk/bootstrap/helpers"
 	"tyk/tyk/bootstrap/readiness"
+	"tyk/tyk/bootstrap/tyk"
 )
 
 func main() {
-	err := data.InitPostInstall()
+	conf, err := data.NewConfig()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		exit(err)
 	}
+
+	logger := logrus.New()
 
 	err = readiness.CheckIfRequiredDeploymentsAreReady()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		exit(err)
 	}
 
-	tp := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: data.BootstrapConf.InsecureSkipVerify},
+	tykSvc := tyk.NewService(conf, logger)
+
+	orgExists := false
+	if err = tykSvc.OrgExists(); err != nil {
+		if !errors.Is(err, tyk.ErrOrgExists) {
+			exit(err)
+		}
+
+		orgExists = true
 	}
-	client := http.Client{Transport: tp}
 
-	fmt.Println("Started creating dashboard org")
+	if !orgExists {
+		if err = tykSvc.CreateOrganisation(); err != nil {
+			exit(err)
+		}
+	}
 
-	err = helpers.CheckForExistingOrganisation(client)
+	admin, err := tykSvc.UserExists(conf.Tyk.Admin.EmailAddress)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		exit(err)
 	}
 
-	fmt.Println("Finished creating dashboard org")
-	fmt.Println("Generating dashboard credentials")
-
-	err = helpers.GenerateDashboardCredentials(client)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if admin == nil {
+		if err = tykSvc.CreateAdmin(); err != nil {
+			exit(err)
+		}
 	}
 
-	fmt.Println("Finished generating dashboard credentials")
-	fmt.Println("Started bootstrapping operator secret")
+	if conf.BootstrapPortal {
+		if err = tykSvc.BootstrapClassicPortal(); err != nil {
+			exit(err)
+		}
+	}
 
 	if data.BootstrapConf.OperatorKubernetesSecretName != "" {
 		err = helpers.BootstrapTykOperatorSecret()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			exit(err)
 		}
 	}
 
@@ -61,20 +70,17 @@ func main() {
 	if data.BootstrapConf.DevPortalKubernetesSecretName != "" {
 		err = helpers.BootstrapTykPortalSecret()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			exit(err)
 		}
 	}
 
-	fmt.Println("Started bootstrapping portal with requests to dashboard")
+}
 
-	if data.BootstrapConf.BootstrapPortal {
-		err = helpers.BoostrapPortal(client)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
+func exit(err error) {
+	if err == nil {
+		os.Exit(0)
 	}
 
-	fmt.Println("Finished bootstrapping portal")
+	fmt.Println(err)
+	os.Exit(1)
 }

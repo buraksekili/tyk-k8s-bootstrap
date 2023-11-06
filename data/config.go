@@ -93,6 +93,15 @@ type TykConf struct {
 
 var BootstrapConf = Config{}
 
+func NewConfig() (*Config, error) {
+	conf := &Config{}
+	if err := envconfig.Process(prefix, conf); err != nil {
+		return nil, err
+	}
+
+	return conf, nil
+}
+
 func InitBootstrapConf() error {
 	return envconfig.Process(prefix, &BootstrapConf)
 }
